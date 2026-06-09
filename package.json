@@ -1,0 +1,21 @@
+{
+  "name": "@normies/cli",
+  "version": "0.1.0",
+  "description": "Local CLI and MCP server for Normies agents.",
+  "type": "module",
+  "bin": {
+    "normies": "./bin/normies.js"
+  },
+  "scripts": {
+    "start": "node ./bin/normies.js",
+    "smoke": "node ./bin/normies.js --help && node ./bin/normies.js claude-config",
+    "mcp": "node ./bin/normies.js mcp"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "viem": "^2.31.0"
+  },
+  "license": "MIT"
+}
