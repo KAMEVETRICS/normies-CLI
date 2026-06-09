@@ -157,7 +157,7 @@ Responses are labeled so users can tell the difference between Claude and the
 Normie persona:
 
 ```text
-[NORMIE #8511 | Name | IN CHARACTER]
+[NORMIE <tokenId> | Name | IN CHARACTER]
 ```
 
 ```text
@@ -167,13 +167,13 @@ Normie persona:
 ## Useful CLI Commands
 
 ```bash
-node ./bin/normies.js agent 8511
-node ./bin/normies.js card 8511
-node ./bin/normies.js context 8511
-node ./bin/normies.js memory add 8511 "Likes short replies"
-node ./bin/normies.js memory list 8511
-node ./bin/normies.js chat 8511 --message "hello"
-node ./bin/normies.js chats 8511
+node ./bin/normies.js agent <tokenId>
+node ./bin/normies.js card <tokenId>
+node ./bin/normies.js context <tokenId>
+node ./bin/normies.js memory add  "Li<tokenId>kes short replies"
+node ./bin/normies.js memory list <tokenId>
+node ./bin/normies.js chat <tokenId> --message "hello"
+node ./bin/normies.js chats <tokenId>
 node ./bin/normies.js chats --sessions
 ```
 
