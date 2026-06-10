@@ -59,10 +59,11 @@ This opens a local login page at `http://127.0.0.1:8787`.
 
 On the page:
 
-1. Connect your wallet.
-2. Sign the login message.
-3. If you own more than one Normie, choose the one you want Claude to use by default.
-4. Close the browser tab after the page says you are logged in.
+1. Choose the wallet you want to use.
+2. Connect that wallet.
+3. Sign the login message.
+4. If you own more than one Normie, choose the one you want Claude to use by default.
+5. Close the browser tab after the page says you are logged in.
 
 Important: this signature is not a transaction. It only proves wallet ownership
 for local holder access.

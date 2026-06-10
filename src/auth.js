@@ -298,8 +298,14 @@ function loginPageHtml() {
     h1 { margin: 0 0 8px; font-size: 24px; }
     p { color: #bdbdbd; line-height: 1.5; }
     button { min-height: 42px; border: 1px solid #777; border-radius: 6px; background: #f4f4f4; color: #111; padding: 0 14px; font-weight: 700; cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: 0.55; }
     button.secondary { background: transparent; color: #f4f4f4; }
     .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+    .wallets { display: grid; gap: 8px; margin-top: 16px; }
+    .wallet { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; min-height: 46px; background: transparent; color: #f4f4f4; text-align: left; }
+    .wallet.selected { border-color: #f4f4f4; background: #2a2a2a; }
+    .wallet img { width: 24px; height: 24px; border-radius: 6px; }
+    .wallet .fallback-icon { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: #3a3a3a; color: #f4f4f4; font-size: 12px; }
     .tokens { display: grid; gap: 8px; margin-top: 16px; }
     .status { margin-top: 16px; font-size: 14px; color: #d7d7d7; white-space: pre-wrap; }
   </style>
@@ -308,25 +314,132 @@ function loginPageHtml() {
   <main>
     <h1>Normies CLI Login</h1>
     <p>Connect your wallet and sign a login message. This is not a transaction and does not authorize transfers, approvals, or wallet control.</p>
+    <div id="wallets" class="wallets"></div>
     <div class="row">
-      <button id="login">Connect and Sign</button>
+      <button id="login" disabled>Connect and Sign</button>
+      <button id="refresh" class="secondary">Refresh Wallets</button>
     </div>
     <div id="tokens" class="tokens"></div>
-    <div id="status" class="status">Waiting for wallet.</div>
+    <div id="status" class="status">Looking for wallets.</div>
   </main>
   <script>
     const loginButton = document.getElementById('login');
+    const refreshButton = document.getElementById('refresh');
     const statusBox = document.getElementById('status');
+    const walletBox = document.getElementById('wallets');
     const tokenBox = document.getElementById('tokens');
+    const wallets = new Map();
+    let selectedWalletKey = null;
 
     function setStatus(text) { statusBox.textContent = text; }
 
+    function walletName(info, provider) {
+      if (info && info.name) return info.name;
+      if (provider && provider.isRabby) return 'Rabby';
+      if (provider && provider.isMetaMask) return 'MetaMask';
+      if (provider && provider.isCoinbaseWallet) return 'Coinbase Wallet';
+      if (provider && provider.isTrust) return 'Trust Wallet';
+      return 'Injected Wallet';
+    }
+
+    function walletKey(info, provider, index) {
+      if (info && info.uuid) return info.uuid;
+      if (info && info.rdns) return info.rdns;
+      return walletName(info, provider) + '-' + index;
+    }
+
+    function addWallet(detail, index) {
+      if (!detail || !detail.provider) return;
+      if (Array.from(wallets.values()).some((wallet) => wallet.provider === detail.provider)) return;
+      const info = detail.info || {};
+      const key = walletKey(info, detail.provider, index || wallets.size);
+      wallets.set(key, {
+        key,
+        info,
+        provider: detail.provider,
+        name: walletName(info, detail.provider)
+      });
+      if (!selectedWalletKey) selectedWalletKey = key;
+      renderWallets();
+    }
+
+    function addInjectedWallets() {
+      if (!window.ethereum) return;
+      const providers = Array.isArray(window.ethereum.providers) && window.ethereum.providers.length
+        ? window.ethereum.providers
+        : [window.ethereum];
+      providers.forEach((provider, index) => addWallet({ provider, info: {} }, index));
+    }
+
+    function renderWallets() {
+      walletBox.innerHTML = '';
+      const walletList = Array.from(wallets.values());
+      loginButton.disabled = walletList.length === 0;
+
+      if (walletList.length === 0) {
+        setStatus('No injected wallet found. Open this page in a wallet-enabled browser.');
+        return;
+      }
+
+      for (const wallet of walletList) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'wallet' + (wallet.key === selectedWalletKey ? ' selected' : '');
+
+        if (wallet.info.icon) {
+          const icon = document.createElement('img');
+          icon.src = wallet.info.icon;
+          icon.alt = '';
+          button.appendChild(icon);
+        } else {
+          const icon = document.createElement('span');
+          icon.className = 'fallback-icon';
+          icon.textContent = wallet.name.slice(0, 1).toUpperCase();
+          button.appendChild(icon);
+        }
+
+        const label = document.createElement('span');
+        label.textContent = wallet.name;
+        button.appendChild(label);
+
+        button.onclick = () => {
+          selectedWalletKey = wallet.key;
+          renderWallets();
+          setStatus('Selected ' + wallet.name + '. Ready to connect.');
+        };
+
+        walletBox.appendChild(button);
+      }
+
+      const selectedWallet = wallets.get(selectedWalletKey);
+      if (selectedWallet) {
+        setStatus('Selected ' + selectedWallet.name + '. Ready to connect.');
+      }
+    }
+
+    function discoverWallets() {
+      wallets.clear();
+      selectedWalletKey = null;
+      setStatus('Looking for wallets.');
+      window.dispatchEvent(new Event('eip6963:requestProvider'));
+      setTimeout(addInjectedWallets, 250);
+      setTimeout(renderWallets, 400);
+    }
+
+    window.addEventListener('eip6963:announceProvider', (event) => {
+      addWallet(event.detail);
+    });
+
+    refreshButton.addEventListener('click', discoverWallets);
+
     loginButton.addEventListener('click', async () => {
       try {
-        if (!window.ethereum) throw new Error('No injected wallet found. Open this page in a wallet-enabled browser.');
+        const wallet = wallets.get(selectedWalletKey);
+        if (!wallet) throw new Error('Choose a wallet before signing in.');
+        const provider = wallet.provider;
         setStatus('Requesting wallet account...');
-        const [address] = await window.ethereum.request({ method: 'eth_requestAccounts' });
-        const chainHex = await window.ethereum.request({ method: 'eth_chainId' }).catch(() => '0x1');
+        const [address] = await provider.request({ method: 'eth_requestAccounts' });
+        const chainHex = await provider.request({ method: 'eth_chainId' }).catch(() => '0x1');
         const chainId = Number.parseInt(chainHex, 16) || 1;
         const challenge = await fetch('/challenge', {
           method: 'POST',
@@ -334,8 +447,8 @@ function loginPageHtml() {
           body: JSON.stringify({ address, chainId })
         }).then((res) => res.json());
         if (challenge.error) throw new Error(challenge.error);
-        setStatus('Please sign the login message in your wallet.');
-        const signature = await window.ethereum.request({
+        setStatus('Please sign the login message in ' + wallet.name + '.');
+        const signature = await provider.request({
           method: 'personal_sign',
           params: [challenge.message, address]
         });
@@ -372,6 +485,8 @@ function loginPageHtml() {
         setStatus(error.message || String(error));
       }
     });
+
+    discoverWallets();
   </script>
 </body>
 </html>`;
