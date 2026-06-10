@@ -131,7 +131,9 @@ export async function runLoginFlow({
 
         const ownership = await api.getHolderTokens(address);
         if (ownership.tokenIds.length === 0) {
-          sendJson(res, 403, { error: "This wallet does not currently hold any Normies." });
+          const message = "This wallet does not currently hold any Normies.";
+          sendJson(res, 403, { error: message });
+          rejectLogin(new Error(message));
           return;
         }
 

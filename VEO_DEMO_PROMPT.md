@@ -29,7 +29,7 @@ Story:
 7. Show the terminal running:
    `node ./bin/normies.js agents owned`
    and:
-   `node ./bin/normies.js use 8511`
+   `node ./bin/normies.js use <tokenId>`
    Caption: "Pick the Normie you want Claude to use."
 8. Show:
    `node ./bin/normies.js claude-config`
@@ -42,7 +42,7 @@ Story:
 11. User asks:
     "Talk to my selected Normie."
     Claude displays a response labeled:
-    `[NORMIE #8511 | Normie Name | IN CHARACTER]`
+    `[NORMIE #<tokenId> | Normie Name | IN CHARACTER]`
 12. Show a second label:
     `[CLAUDE | OUT OF CHARACTER]`
     Caption: "Clear labels separate Claude setup talk from Normie roleplay."
