@@ -84,7 +84,7 @@ node ./bin/normies.js agents owned
 Choose a different owned Normie:
 
 ```bash
-node ./bin/normies.js use 8511
+node ./bin/normies.js use <token id>
 ```
 
 Log out:
