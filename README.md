@@ -243,8 +243,3 @@ Not allowed:
 - Transferring assets.
 - Requesting token approvals.
 - Controlling or delegating wallet authority.
-
-## Demo Prompt
-
-A ready-to-use Veo demo/tutorial prompt is available in
-[`VEO_DEMO_PROMPT.md`](./VEO_DEMO_PROMPT.md).
