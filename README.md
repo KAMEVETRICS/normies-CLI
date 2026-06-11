@@ -7,8 +7,7 @@ chat context, and save local chat history/memories for verified Normies holders.
 It uses wallet signature login for holder checks only. It does not request
 transactions, approvals, transfers, private keys, or seed phrases.
 
-GitHub repo: https://github.com/KAMEVETRICS/normies-CLI.git
-
+GitHub repo: https://github.com/KAMEVETRICS/normies-CLI
 ## What It Does
 
 - Fetches public Normies agent/persona data.
