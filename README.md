@@ -141,7 +141,7 @@ Example shape:
 
 Restart Claude Desktop after saving the config.
 
-For a detailed troubleshooting walkthrough, see
+NB: For a detailed troubleshooting walkthrough, see
 [`CLAUDE_CONFIG_SETUP.md`](./CLAUDE_CONFIG_SETUP.md).
 
 ## Step 4: Use In Claude
