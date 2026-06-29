@@ -100,18 +100,58 @@ selection and owned-token listing always re-check the live holder list.
 
 ## Step 3: Connect To Claude Desktop
 
-Print the Claude Desktop MCP config:
+Install or update the Claude Desktop MCP config:
+
+```bash
+node ./bin/normies.js claude-config --write
+```
+
+This command:
+
+- Finds the common Claude Desktop config locations for your OS.
+- Updates any existing Claude config files it finds.
+- Creates a backup before changing an existing file.
+- Preserves your other Claude settings and MCP servers.
+- Adds or replaces only the `mcpServers.normies` entry.
+
+Check what the CLI detected:
+
+```bash
+node ./bin/normies.js claude-config --status
+```
+
+Restart Claude Desktop after the config is written.
+
+For a detailed troubleshooting walkthrough, see
+[`CLAUDE_CONFIG_SETUP.md`](./CLAUDE_CONFIG_SETUP.md).
+
+If you need to write to a specific config path:
+
+```bash
+node ./bin/normies.js claude-config --write --path "C:\path\to\claude_desktop_config.json"
+```
+
+If Claude says the config JSON is invalid, fix the JSON file first. If you want
+the CLI to replace a broken config after creating a backup, run:
+
+```bash
+node ./bin/normies.js claude-config --write --force
+```
+
+Manual fallback:
 
 ```bash
 node ./bin/normies.js claude-config
 ```
 
-Copy the printed `mcpServers.normies` block into your Claude Desktop config file.
+Copy the printed `mcpServers.normies` block into your Claude Desktop config file
+only if the automatic writer cannot access your Claude config.
 
 Common config locations:
 
 ```text
 Windows: %APPDATA%\Claude\claude_desktop_config.json
+Windows Store Claude: %LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json
 macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
 ```
 
@@ -180,6 +220,9 @@ node ./bin/normies.js memory list <tokenId>
 node ./bin/normies.js chat <tokenId> --message "hello"
 node ./bin/normies.js chats <tokenId>
 node ./bin/normies.js chats --sessions
+node ./bin/normies.js claude-config --write
+node ./bin/normies.js claude-config --status
+node ./bin/normies.js doctor
 ```
 
 ## Local Storage
@@ -208,6 +251,9 @@ node ./bin/normies.js mcp
 If Claude does not see the Normies tools:
 
 - Make sure Claude Desktop was restarted after editing the config.
+- Run `node ./bin/normies.js claude-config --write`.
+- Run `node ./bin/normies.js claude-config --status` and confirm `hasNormies` is `true`.
+- Run `node ./bin/normies.js doctor` and check the Claude config paths.
 - Make sure `mcpServers` is at the top level of the JSON file.
 - Run `node ./bin/normies.js claude-config` again and compare paths.
 - Use an absolute path to `bin/normies.js`.

@@ -136,20 +136,27 @@ export async function runLoginFlow({
           rejectLogin(new Error(message));
           return;
         }
+        const registration = await api.getAgentRegistrationStatus(ownership.tokenIds);
 
         verified = {
           address,
           tokenIds: ownership.tokenIds,
+          registration,
           signedMessage: body.message,
           signature: body.signature
         };
 
-        if (ownership.tokenIds.length === 1) {
-          const auth = store.saveAuth({
+        if (registration.registeredAgentTokenIds.length <= 1) {
+          const auth = addRegistrationStatus(store.saveAuth({
             ...verified,
-            selectedTokenId: ownership.tokenIds[0]
+            selectedTokenId: registration.registeredAgentTokenIds[0] ?? null
+          }), registration);
+          sendJson(res, 200, {
+            authenticated: true,
+            requiresSelection: false,
+            auth,
+            ...publicRegistrationStatus(registration)
           });
-          sendJson(res, 200, { authenticated: true, requiresSelection: false, auth });
           resolveLogin(auth);
           return;
         }
@@ -158,7 +165,8 @@ export async function runLoginFlow({
           authenticated: true,
           requiresSelection: true,
           address,
-          tokenIds: ownership.tokenIds
+          tokenIds: ownership.tokenIds,
+          ...publicRegistrationStatus(registration)
         });
         return;
       }
@@ -176,11 +184,23 @@ export async function runLoginFlow({
           return;
         }
 
-        const auth = store.saveAuth({
+        if (!verified.registration.registeredAgentTokenIds.includes(selectedTokenId)) {
+          sendJson(res, 403, {
+            error: `Normie #${selectedTokenId} is owned by this wallet, but it is not registered as an agent yet.`,
+            registerUrl: verified.registration.registerUrl
+          });
+          return;
+        }
+
+        const auth = addRegistrationStatus(store.saveAuth({
           ...verified,
           selectedTokenId
+        }), verified.registration);
+        sendJson(res, 200, {
+          authenticated: true,
+          auth,
+          ...publicRegistrationStatus(verified.registration)
         });
-        sendJson(res, 200, { authenticated: true, auth });
         resolveLogin(auth);
         return;
       }
@@ -282,6 +302,21 @@ function sendJson(res, status, body) {
 function sendHtml(res, html) {
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
   res.end(html);
+}
+
+function publicRegistrationStatus(registration) {
+  return {
+    registeredAgentTokenIds: registration.registeredAgentTokenIds,
+    unregisteredTokenIds: registration.unregisteredTokenIds,
+    registerUrl: registration.registerUrl
+  };
+}
+
+function addRegistrationStatus(auth, registration) {
+  return {
+    ...auth,
+    ...publicRegistrationStatus(registration)
+  };
 }
 
 function loginPageHtml() {
@@ -460,12 +495,16 @@ function loginPageHtml() {
         }).then((res) => res.json());
         if (verified.error) throw new Error(verified.error);
         if (!verified.requiresSelection) {
+          if ((verified.registeredAgentTokenIds || []).length === 0) {
+            setStatus('Wallet verified, but none of your owned Normies are registered as agents yet. Register one at ' + verified.registerUrl + ' before using it in Claude.');
+            return;
+          }
           setStatus('Logged in. You can close this tab.');
           return;
         }
-        setStatus('Choose which owned Normie Claude should use by default.');
+        setStatus('Choose which registered Normie agent Claude should use by default.');
         tokenBox.innerHTML = '';
-        for (const tokenId of verified.tokenIds) {
+        for (const tokenId of verified.registeredAgentTokenIds || []) {
           const button = document.createElement('button');
           button.className = 'secondary';
           button.textContent = 'Use Normie #' + tokenId;
@@ -479,6 +518,13 @@ function loginPageHtml() {
             setStatus('Logged in with Normie #' + tokenId + '. You can close this tab.');
             tokenBox.innerHTML = '';
           };
+          tokenBox.appendChild(button);
+        }
+        for (const tokenId of verified.unregisteredTokenIds || []) {
+          const button = document.createElement('button');
+          button.className = 'secondary';
+          button.disabled = true;
+          button.textContent = 'Normie #' + tokenId + ' is not registered as an agent';
           tokenBox.appendChild(button);
         }
       } catch (error) {

@@ -11,6 +11,10 @@ export function getNormiesHome() {
   return process.env.NORMIES_HOME || path.join(os.homedir(), ".normies");
 }
 
+export function getAuthMode() {
+  return (process.env.NORMIES_AUTH_MODE || "normies").toLowerCase();
+}
+
 export function nowIso() {
   return new Date().toISOString();
 }

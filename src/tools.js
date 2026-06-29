@@ -1,10 +1,13 @@
-import { NormiesApiClient } from "./api.js";
+import { NormiesApiClient, buildUnregisteredAgentMessage } from "./api.js";
+import { AgentCapabilityClient } from "./agent-capabilities.js";
 import { checkGuardrails } from "./guardrails.js";
+import { getAuthMode } from "./config.js";
 import { NormiesStore } from "./store.js";
 
 export function createToolContext(overrides = {}) {
   return {
     api: overrides.api || new NormiesApiClient(),
+    capabilities: overrides.capabilities || new AgentCapabilityClient(),
     store: overrides.store || new NormiesStore()
   };
 }
@@ -75,20 +78,42 @@ export const toolDefinitions = [
     },
     handler: async (args, ctx) => {
       const requested = { ...args };
-      if (!requested.tokenId && !requested.agentId) {
-        const access = await ctx.store.requireFreshTokenAccess(undefined, { api: ctx.api });
-        requested.tokenId = access.tokenId;
-      } else if (requested.tokenId) {
-        await ctx.store.requireFreshTokenAccess(requested.tokenId, { api: ctx.api });
-      } else {
-        const auth = ctx.store.getAuth();
+      let registration = null;
+      if (!requested.agentId) {
+        const auth = await getRefreshedAuth(ctx);
         if (!auth) {
           throw new Error("Login required. Run `normies login`, then pick an owned Normie.");
         }
+        registration = await ctx.api.getAgentRegistrationStatus(auth.tokenIds);
+        const tokenId = requested.tokenId ?? auth.selectedTokenId;
+        if (tokenId === undefined || tokenId === null) {
+          return unavailableAgentContext({
+            auth,
+            registration,
+            message: registration.hasRegisteredAgents
+              ? "No registered Normie agent is selected. Run `normies use <tokenId>` with a registeredAgentTokenId."
+              : "You own Normie(s), but none of them are registered as agents yet."
+          });
+        }
+
+        const requestedTokenId = Number(tokenId);
+        if (!auth.tokenIds.includes(requestedTokenId)) {
+          throw new Error(`Access denied. Token ${requestedTokenId} is not owned by ${auth.address}.`);
+        }
+        if (!registration.registeredAgentTokenIds.includes(requestedTokenId)) {
+          return unavailableAgentContext({
+            auth,
+            registration,
+            tokenId: requestedTokenId,
+            message: buildUnregisteredAgentMessage(requestedTokenId)
+          });
+        }
+
+        requested.tokenId = requestedTokenId;
       }
 
       const agent = await ctx.api.getAgent(requested);
-      const tokenId = Number(agent.tokenId ?? args.tokenId);
+      const tokenId = Number(agent.tokenId ?? requested.tokenId ?? args.tokenId);
       await ctx.store.requireFreshTokenAccess(tokenId, { api: ctx.api });
       const memories = ctx.store.listMemories({ tokenId, limit: args.memoryLimit ?? 10 });
       const recentMessages = ctx.store.listMessages({
@@ -113,6 +138,8 @@ export const toolDefinitions = [
         canvas: agent.canvas,
         memories,
         recentMessages,
+        registeredAgentTokenIds: registration?.registeredAgentTokenIds,
+        unregisteredTokenIds: registration?.unregisteredTokenIds,
         modeLabels,
         responseProtocol: {
           defaultMode: "inCharacter",
@@ -217,15 +244,22 @@ export const toolDefinitions = [
     },
     handler: async (_args, ctx) => {
       const auth = await getRefreshedAuth(ctx);
+      const registration = auth ? await ctx.api.getAgentRegistrationStatus(auth.tokenIds) : null;
       return auth
         ? {
             loggedIn: true,
             address: auth.address,
             selectedTokenId: auth.selectedTokenId,
             tokenIds: auth.tokenIds,
-            updatedAt: auth.updatedAt
+            ...registrationFields(registration),
+            updatedAt: auth.updatedAt,
+            diagnostics: authDiagnostics(ctx)
           }
-        : { loggedIn: false, nextStep: "Run `normies login` in a terminal." };
+        : {
+            loggedIn: false,
+            nextStep: "Run `normies login` in a terminal.",
+            diagnostics: authDiagnostics(ctx)
+          };
     }
   },
   {
@@ -240,11 +274,13 @@ export const toolDefinitions = [
       if (!auth) {
         throw new Error("Not logged in. Run `normies login` in a terminal.");
       }
+      const registration = await ctx.api.getAgentRegistrationStatus(auth.tokenIds);
 
       return {
         address: auth.address,
         selectedTokenId: auth.selectedTokenId,
-        tokenIds: auth.tokenIds
+        tokenIds: auth.tokenIds,
+        ...registrationFields(registration)
       };
     }
   },
@@ -259,12 +295,23 @@ export const toolDefinitions = [
       required: ["tokenId"]
     },
     handler: async (args, ctx) => {
-      await ctx.store.refreshAuth({ api: ctx.api, force: true });
+      const refreshedAuth = await ctx.store.refreshAuth({ api: ctx.api, force: true });
+      const requestedTokenId = Number(args.tokenId);
+      if (!refreshedAuth.tokenIds.includes(requestedTokenId)) {
+        throw new Error(`Access denied. Token ${requestedTokenId} is not owned by ${refreshedAuth.address}.`);
+      }
+
+      const registration = await ctx.api.getAgentRegistrationStatus(refreshedAuth.tokenIds);
+      if (!registration.registeredAgentTokenIds.includes(requestedTokenId)) {
+        throw new Error(buildUnregisteredAgentMessage(requestedTokenId));
+      }
+
       const auth = ctx.store.selectToken(args.tokenId);
       return {
         selectedTokenId: auth.selectedTokenId,
         address: auth.address,
-        tokenIds: auth.tokenIds
+        tokenIds: auth.tokenIds,
+        ...registrationFields(registration)
       };
     }
   },
@@ -280,6 +327,80 @@ export const toolDefinitions = [
       required: ["action"]
     },
     handler: async (args) => checkGuardrails(args)
+  },
+  {
+    name: "normies_agentroom_join",
+    description: "Join an AgentRoom coordination room using the logged-in holder wallet address. No wallet signing or payment is performed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        roomId: {
+          type: "string",
+          description: "Named AgentRoom room id to join for coordination."
+        }
+      },
+      required: ["roomId"]
+    },
+    handler: async (args, ctx) => {
+      const auth = await getRequiredAuth(ctx);
+      const result = await getCapabilities(ctx).joinAgentRoom({
+        roomId: args.roomId,
+        wallet: auth.address
+      });
+
+      return {
+        capability: "AgentRoom",
+        roomId: args.roomId,
+        wallet: auth.address,
+        result,
+        safetyBoundary: [
+          "AgentRoom coordination does not grant wallet authority.",
+          "Do not share private keys, seed phrases, or transaction-signing instructions in rooms.",
+          "Use the room for coordination, voting, and signals only."
+        ]
+      };
+    }
+  },
+  {
+    name: "normies_swarmskill_prepare_session",
+    description: "Prepare a SwarmSkill coin-trading session request. This does not sign x402, spend funds, buy, or sell; the user must approve and run the payment flow outside Claude.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        minParticipants: {
+          type: "integer",
+          minimum: 2,
+          maximum: 500,
+          description: "Quorum for the session. Defaults to SwarmSkill service default."
+        },
+        maxParticipants: {
+          type: "integer",
+          minimum: 2,
+          maximum: 500,
+          description: "Participant cap. Must be greater than or equal to minParticipants when both are provided."
+        },
+        joinWindowMinutes: {
+          type: "integer",
+          minimum: 5,
+          maximum: 1440,
+          description: "How long agents may join before activation or expiry."
+        }
+      }
+    },
+    handler: async (args, ctx) => {
+      const auth = await getRequiredAuth(ctx);
+      const prepared = getCapabilities(ctx).prepareSwarmSkillSession(args);
+      return {
+        ...prepared,
+        holderAddress: auth.address,
+        claudeInstructions: [
+          "Present this as a prepared trading-session request, not an executed trade.",
+          "Require explicit user review before any x402 wallet action.",
+          "Do not claim the Normie has bought, sold, voted, joined, or funded the session.",
+          "Tell the user that all trading risk and wallet signing must happen outside Claude."
+        ]
+      };
+    }
   }
 ];
 
@@ -324,6 +445,19 @@ async function getRefreshedAuth(ctx, options) {
   return ctx.store.refreshAuth({ api: ctx.api, ...options });
 }
 
+async function getRequiredAuth(ctx, options) {
+  const auth = await getRefreshedAuth(ctx, options);
+  if (!auth) {
+    throw new Error("Login required. Run `normies login` before using external agent capabilities.");
+  }
+
+  return auth;
+}
+
+function getCapabilities(ctx) {
+  return ctx.capabilities || new AgentCapabilityClient();
+}
+
 function resolveStoredTokenId(store, args) {
   if (args.tokenId !== undefined && args.tokenId !== null) {
     return args.tokenId;
@@ -334,4 +468,50 @@ function resolveStoredTokenId(store, args) {
   }
 
   return undefined;
+}
+
+function authDiagnostics(ctx) {
+  return {
+    authMode: getAuthMode(),
+    normiesHome: ctx.store.home
+  };
+}
+
+function registrationFields(registration) {
+  if (!registration) {
+    return {};
+  }
+
+  return {
+    registeredAgentTokenIds: registration.registeredAgentTokenIds,
+    unregisteredTokenIds: registration.unregisteredTokenIds,
+    registerUrl: registration.registerUrl,
+    hasRegisteredAgents: registration.hasRegisteredAgents
+  };
+}
+
+function unavailableAgentContext({ auth, registration, tokenId, message }) {
+  return {
+    agentRegistered: false,
+    tokenId: tokenId ?? null,
+    address: auth.address,
+    selectedTokenId: auth.selectedTokenId,
+    tokenIds: auth.tokenIds,
+    ...registrationFields(registration),
+    nextStep: message,
+    responseProtocol: {
+      defaultMode: "outOfCharacter",
+      outOfCharacterPrefix: "[CLAUDE | OUT OF CHARACTER]",
+      rules: [
+        "Do not speak as the Normie because no registered agent context is available.",
+        "Tell the user they own the token but must register it as an agent before Claude can use it.",
+        "Share the registerUrl when helpful."
+      ]
+    },
+    claudeInstructions: [
+      "Begin with [CLAUDE | OUT OF CHARACTER].",
+      message,
+      `Agent registration page: ${registration?.registerUrl || "https://www.normies.art/lab/agentic/agents/"}`
+    ]
+  };
 }

@@ -1,6 +1,11 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getApiUrl, getNormiesHome } from "./config.js";
+import { getApiUrl, getAuthMode, getNormiesHome } from "./config.js";
+import {
+  buildClaudeConfigFragment,
+  getClaudeConfigStatus,
+  writeClaudeConfig
+} from "./claude-config.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = path.resolve(path.dirname(__filename), "..");
@@ -23,7 +28,12 @@ export async function main(argv = process.argv.slice(2)) {
     }
 
     case "claude-config":
-      printClaudeConfig();
+      await handleClaudeConfig(parsed.options);
+      return;
+
+    case "doctor":
+    case "diagnose":
+      await diagnose();
       return;
 
     case "agent":
@@ -135,12 +145,22 @@ async function useToken(tokenId) {
     throw new Error("Usage: normies use <tokenId>");
   }
 
-  const { NormiesApiClient } = await import("./api.js");
+  const { NormiesApiClient, buildUnregisteredAgentMessage } = await import("./api.js");
   const { NormiesStore } = await import("./store.js");
   const api = new NormiesApiClient();
   const store = new NormiesStore();
-  await store.refreshAuth({ api, force: true });
-  printJson(authSummary(store.selectToken(Number(tokenId))));
+  const refreshedAuth = await store.refreshAuth({ api, force: true });
+  const requestedTokenId = Number(tokenId);
+  if (!refreshedAuth.tokenIds.includes(requestedTokenId)) {
+    throw new Error(`Access denied. Token ${requestedTokenId} is not owned by ${refreshedAuth.address}.`);
+  }
+
+  const registration = await api.getAgentRegistrationStatus(refreshedAuth.tokenIds);
+  if (!registration.registeredAgentTokenIds.includes(requestedTokenId)) {
+    throw new Error(buildUnregisteredAgentMessage(requestedTokenId));
+  }
+
+  printJson(authSummary(store.selectToken(requestedTokenId), registration));
 }
 
 async function listOwnedAgents(options) {
@@ -149,7 +169,9 @@ async function listOwnedAgents(options) {
   const api = new NormiesApiClient();
 
   if (options.address) {
-    printJson(await api.getHolderTokens(options.address));
+    const ownership = await api.getHolderTokens(options.address);
+    const registration = await api.getAgentRegistrationStatus(ownership.tokenIds);
+    printJson(holderAgentSummary(ownership, registration));
     return;
   }
 
@@ -160,11 +182,8 @@ async function listOwnedAgents(options) {
   }
 
   const refreshedAuth = await store.refreshAuth({ api, force: true });
-  printJson({
-    address: refreshedAuth.address,
-    selectedTokenId: refreshedAuth.selectedTokenId,
-    tokenIds: refreshedAuth.tokenIds
-  });
+  const registration = await api.getAgentRegistrationStatus(refreshedAuth.tokenIds);
+  printJson(holderAgentSummary(refreshedAuth, registration));
 }
 
 async function showAgentCard(tokenId) {
@@ -301,28 +320,81 @@ function parseArgs(argv) {
   return { options, positionals };
 }
 
-function printClaudeConfig() {
+async function handleClaudeConfig(options) {
+  if (options.write) {
+    printJson(writeClaudeConfig({
+      binPath: BIN_PATH,
+      targetPath: options.path,
+      force: Boolean(options.force)
+    }));
+    return;
+  }
+
+  if (options.status || options.diagnose) {
+    printJson(getClaudeConfigStatus({ targetPath: options.path }));
+    return;
+  }
+
+  printJson(buildClaudeConfigFragment({ binPath: BIN_PATH }));
+}
+
+async function diagnose() {
+  const { NormiesStore } = await import("./store.js");
+  const store = new NormiesStore();
+  const auth = store.getAuth();
   printJson({
-    mcpServers: {
-      normies: {
-        command: process.execPath,
-        args: [BIN_PATH, "mcp"],
-        env: {
-          NORMIES_API_URL: getApiUrl(),
-          NORMIES_HOME: getNormiesHome()
-        }
-      }
-    }
+    ok: true,
+    node: {
+      version: process.version,
+      execPath: process.execPath
+    },
+    normies: {
+      apiUrl: getApiUrl(),
+      home: getNormiesHome(),
+      authMode: getAuthMode(),
+      binPath: BIN_PATH,
+      loggedIn: Boolean(auth),
+      session: auth ? authSummary(auth) : null
+    },
+    claude: getClaudeConfigStatus()
   });
 }
 
-function authSummary(auth) {
-  return {
+function authSummary(auth, registration) {
+  const summary = {
     loggedIn: true,
     address: auth.address,
     selectedTokenId: auth.selectedTokenId,
     tokenIds: auth.tokenIds,
     updatedAt: auth.updatedAt
+  };
+
+  const registeredAgentTokenIds = registration?.registeredAgentTokenIds ?? auth.registeredAgentTokenIds;
+  const unregisteredTokenIds = registration?.unregisteredTokenIds ?? auth.unregisteredTokenIds;
+  if (registeredAgentTokenIds) {
+    summary.registeredAgentTokenIds = registeredAgentTokenIds;
+  }
+  if (unregisteredTokenIds) {
+    summary.unregisteredTokenIds = unregisteredTokenIds;
+  }
+  if (registration?.registerUrl || auth.registerUrl) {
+    summary.registerUrl = registration?.registerUrl || auth.registerUrl;
+  }
+
+  return summary;
+}
+
+function holderAgentSummary(holder, registration) {
+  return {
+    address: holder.address,
+    selectedTokenId: holder.selectedTokenId ?? null,
+    tokenIds: holder.tokenIds,
+    registeredAgentTokenIds: registration.registeredAgentTokenIds,
+    unregisteredTokenIds: registration.unregisteredTokenIds,
+    registerUrl: registration.registerUrl,
+    nextStep: registration.hasRegisteredAgents
+      ? "Use `normies use <tokenId>` with a registeredAgentTokenId."
+      : "Register an owned Normie as an agent before using it in Claude."
   };
 }
 
@@ -345,6 +417,9 @@ Usage:
   normies chats <tokenId>                  List recent chat messages
   normies chats --sessions                 List saved sessions
   normies claude-config                    Print Claude Desktop MCP config
+  normies claude-config --write            Install/update Claude MCP config
+  normies claude-config --status           Diagnose Claude MCP config files
+  normies doctor                           Print local setup diagnostics
   normies mcp                              Run the MCP stdio server
 
 Environment:

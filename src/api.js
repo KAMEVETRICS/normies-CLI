@@ -10,6 +10,16 @@ export class NormiesApiError extends Error {
   }
 }
 
+export class NormieAgentNotRegisteredError extends Error {
+  constructor(tokenId, { cause } = {}) {
+    super(`Normie #${tokenId} is owned by the signed-in wallet, but it is not registered as an agent yet.`);
+    this.name = "NormieAgentNotRegisteredError";
+    this.tokenId = Number(tokenId);
+    this.registerUrl = "https://www.normies.art/lab/agentic/agents/";
+    this.cause = cause;
+  }
+}
+
 export class NormiesApiClient {
   constructor({ baseUrl = getApiUrl(), fetchImpl = fetch } = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
@@ -89,11 +99,53 @@ export class NormiesApiClient {
   }
 
   async getAgent({ tokenId, agentId }) {
+
     if (agentId !== undefined && agentId !== null) {
       return this.getJson(`/agents/by-agent-id/${encodeURIComponent(agentId)}/info`);
     }
 
     return this.getJson(`/agents/info/${encodeURIComponent(tokenId)}`);
+  }
+
+  async getAgentRegistrationStatus(tokenIds = []) {
+    const normalizedTokenIds = normalizeTokenIds(tokenIds);
+    if (normalizedTokenIds.length === 0) {
+      return registrationSummary([]);
+    }
+
+
+    const checks = await Promise.all(normalizedTokenIds.map((tokenId) => this.checkAgentRegistration(tokenId)));
+    return registrationSummary(normalizedTokenIds, checks);
+  }
+
+  async requireRegisteredAgent(tokenId) {
+    const status = await this.getAgentRegistrationStatus([tokenId]);
+    if (!status.registeredAgentTokenIds.includes(Number(tokenId))) {
+      throw new NormieAgentNotRegisteredError(tokenId);
+    }
+
+    return status.registeredAgents[0];
+  }
+
+  async checkAgentRegistration(tokenId) {
+    try {
+      const agent = await this.getAgent({ tokenId });
+      return {
+        tokenId: Number(tokenId),
+        registered: true,
+        agent
+      };
+    } catch (error) {
+      if (isAgentNotRegisteredError(error)) {
+        return {
+          tokenId: Number(tokenId),
+          registered: false,
+          error: error.message
+        };
+      }
+
+      throw new Error(`Could not check whether Normie #${tokenId} is registered as an agent: ${error?.message || String(error)}`);
+    }
   }
 
   async getAgentCard(tokenId) {
@@ -109,6 +161,7 @@ export class NormiesApiClient {
   }
 
   async getHolderTokens(address) {
+
     const result = await this.getJson(`/holders/${encodeURIComponent(address)}`);
     return {
       address: result.address,
@@ -129,4 +182,42 @@ export class NormiesApiClient {
   async searchAgents({ q, limit = 10 } = {}) {
     return this.getJson("/agents/search", { q, limit });
   }
+}
+
+export function isAgentNotRegisteredError(error) {
+  return error instanceof NormieAgentNotRegisteredError
+    || (error instanceof NormiesApiError && error.status === 404);
+}
+
+export function buildUnregisteredAgentMessage(tokenId) {
+  const subject = tokenId ? `Normie #${tokenId}` : "This Normie";
+  return `${subject} is owned by the signed-in wallet, but it is not registered as an agent yet. Register it at https://www.normies.art/lab/agentic/agents/ before using it in Claude.`;
+}
+
+function registrationSummary(tokenIds, checks = []) {
+  const registeredAgents = checks
+    .filter((check) => check.registered)
+    .map((check) => check.agent);
+  const registeredAgentTokenIds = registeredAgents
+    .map((agent) => Number(agent.tokenId))
+    .filter(Number.isInteger)
+    .sort((a, b) => a - b);
+  const unregisteredTokenIds = tokenIds
+    .filter((tokenId) => !registeredAgentTokenIds.includes(tokenId))
+    .sort((a, b) => a - b);
+
+  return {
+    tokenIds,
+    registeredAgentTokenIds,
+    unregisteredTokenIds,
+    registeredAgents,
+    registerUrl: "https://www.normies.art/lab/agentic/agents/",
+    hasRegisteredAgents: registeredAgentTokenIds.length > 0
+  };
+}
+
+function normalizeTokenIds(tokenIds = []) {
+  return [...new Set((tokenIds ?? []).map(Number))]
+    .filter(Number.isInteger)
+    .sort((a, b) => a - b);
 }
