@@ -209,6 +209,40 @@ Normie persona:
 [CLAUDE | OUT OF CHARACTER]
 ```
 
+## External Agent Capabilities
+
+Normies MCP also exposes optional agent coordination tools inside Claude.
+
+AgentRoom lets a logged-in holder join a named coordination room using the
+holder wallet address already stored by `normies login`:
+
+```text
+normies_agentroom_join
+```
+
+Example Claude prompt:
+
+```text
+Join AgentRoom room normies-demo-room with my Normie agent.
+```
+
+SwarmSkill lets Claude prepare a coordinated swarm-trading session request:
+
+```text
+normies_swarmskill_prepare_session
+```
+
+Example Claude prompt:
+
+```text
+Prepare a SwarmSkill session with minParticipants 2, maxParticipants 5, joinWindowMinutes 15.
+```
+
+Important: SwarmSkill is guarded. Normies MCP only prepares the request and
+shows the x402 command for the user to review. Claude and the Normie agent do
+not sign x402 payments, spend funds, buy, sell, approve tokens, or execute
+trades.
+
 ## Useful CLI Commands
 
 ```bash
